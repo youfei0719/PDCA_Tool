@@ -1,66 +1,92 @@
 import Foundation
 
-enum AIError: Error {
-    case invalidURL
-    case networkError
-    case decodingError
-}
-
-struct AIService {
-    static let shared = AIService()
+class AIManager {
+    static let shared = AIManager()
+    private init() {}
     
-    // 这里使用了你之前提供的 DeepSeek Key
-    private let apiKey = "sk-e541860b53e2430893a5804ccfa11807"
-    private let endpoint = "https://api.deepseek.com/v1/chat/completions"
+    func verifyConfiguration(apiKey: String, baseURL: String, model: String) async throws -> Bool {
+        guard let url = URL(string: baseURL) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let requestBody: [String: Any] = [
+            "model": model,
+            "messages": [["role": "user", "content": "hi"]],
+            "max_tokens": 5
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if httpResponse.statusCode == 200 { return true }
+        else {
+            let errorMsg = String(data: data, encoding: .utf8) ?? "未知错误"
+            throw NSError(domain: "APIError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "验证失败(状态码 \(httpResponse.statusCode)): \(errorMsg)"])
+        }
+    }
     
-    /// 调用 AI 将目标拆解为任务列表
-    func decomposeGoal(title: String) async throws -> [String] {
-        guard let url = URL(string: endpoint) else { throw AIError.invalidURL }
+    func decomposeGoal(title: String, apiKey: String, baseURL: String, model: String) async throws -> [String] {
+        let systemPrompt = "你是一个精通PDCA工作法的效率专家。请将用户的目标拆解为3-5个具体的、可执行的原子任务。请只返回JSON数组格式，例如：[\"任务1\", \"任务2\"]，不要有任何其他解释。"
+        return try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "目标：\(title)", responseFormat: "json_object", apiKey: apiKey, baseURL: baseURL, model: model)
+    }
+    
+    // 🌟 深度重构：加入大目标上下文，彻底解决“为什么不用网页版AI”的问题
+    func analyzeTask(goalTitle: String, taskTitle: String, isCompleted: Bool, apiKey: String, baseURL: String, model: String) async throws -> String {
+        let statusText = isCompleted ? "已完成复盘" : "执行遇到卡点"
         
-        let prompt = """
-        你是一个精通 PDCA 逻辑的个人成长助手。
-        用户现在的目标是：'\(title)'
-        请将其拆解为 3 到 5 个具体的、可立即执行的微任务。
+        let systemPrompt = """
+        你是一个顶级的敏捷项目管理专家。
+        用户的宏观项目目标是：【\(goalTitle)】。
+        当前正在执行的子任务是：【\(taskTitle)】，状态为：\(statusText)。
         
-        要求：
-        1. 每个任务字数简短（不超过15字）。
-        2. 仅返回任务内容，每行一个任务。
-        3. 不要包含编号或多余的解释。
+        请结合宏观目标，针对这个具体的子任务给出破局洞察。
+        严格使用以下 Markdown 格式输出（不要用 ###，直接用 ** 加粗）：
+        
+        **🔍 核心阻力剖析**
+        (分析该任务在整个项目中最容易踩坑的地方，1-2句话)
+        
+        **💡 破局策略**
+        (给出 2 条极其具体的操作建议)
+        
+        **🎯 5分钟下一步动作**
+        (列出 1-2 个可以立刻动手执行的原子动作)
         """
         
-        let body: [String: Any] = [
-            "model": "deepseek-chat",
-            "messages": [
-                ["role": "system", "content": "你是一个高效的任务规划专家。"],
-                ["role": "user", "content": prompt]
-            ],
-            "temperature": 0.7
-        ]
+        let responseArray = try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "请输出针对【\(taskTitle)】的洞察。", responseFormat: "text", apiKey: apiKey, baseURL: baseURL, model: model)
+        return responseArray.first ?? "抱歉，分析数据时出现了一点小偏差。"
+    }
+    
+    private func fetchAIResponse(systemPrompt: String, userMessage: String, responseFormat: String, apiKey: String, baseURL: String, model: String) async throws -> [String] {
+        guard let url = URL(string: baseURL) else { throw URLError(.badURL) }
+        let messages = [["role": "system", "content": systemPrompt], ["role": "user", "content": userMessage]]
+        let requestBody: [String: Any] = ["model": model, "messages": messages, "response_format": ["type": responseFormat == "json_object" ? "json_object" : "text"]]
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { throw URLError(.badServerResponse) }
         
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw AIError.networkError
+        let result = try JSONDecoder().decode(DeepSeekResponse.self, from: data)
+        let content = result.choices.first?.message.content ?? ""
+        
+        if responseFormat == "json_object" {
+            let backticks = String(repeating: "`", count: 3)
+            let cleanContent = content.replacingOccurrences(of: backticks + "json", with: "").replacingOccurrences(of: backticks, with: "")
+            if let jsonData = cleanContent.data(using: .utf8), let tasks = try? JSONDecoder().decode([String].self, from: jsonData) { return tasks }
+            return [content]
+        } else {
+            return [content]
         }
-        
-        // 解析返回结果
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let choices = json["choices"] as? [[String: Any]],
-           let message = choices.first?["message"] as? [String: Any],
-           let content = message["content"] as? String {
-            
-            // 将返回的多行文本拆分为数组
-            let tasks = content.components(separatedBy: .newlines)
-                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            return tasks
-        }
-        
-        throw AIError.decodingError
     }
+}
+
+struct DeepSeekResponse: Codable {
+    let choices: [Choice]
+    struct Choice: Codable { let message: Message }
+    struct Message: Codable { let content: String }
 }
