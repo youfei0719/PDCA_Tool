@@ -1,48 +1,50 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - 1. 根视图 (显示大目标)
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Goal.creationDate, order: .reverse) private var goals: [Goal]
     @State private var healthManager = HealthManager.shared
-
+    
     @State private var isShowingAddGoalAlert = false
     @State private var newGoalTitle = ""
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                LinearGradient(colors: [Color.blue.opacity(0.1), Color.purple.opacity(0.1), .white],
-                               startPoint: .topLeading,
-                               endPoint: .bottomTrailing)
-                    .ignoresSafeArea()
+            List {
+                Section {
+                    HealthGlassCard(healthManager: healthManager)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
                 
-                List {
-                    Section {
-                        HealthGlassCard(healthManager: healthManager)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                    }
-                    
-                    Section(header: Text("我的目标")
-                        .font(.system(.subheadline, design: .rounded))
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                        .textCase(nil)
-                    ) {
+                Section(header: Text("宏观目标规划")
+                    .font(.system(.subheadline, design: .rounded))
+                    .fontWeight(.bold)
+                    .foregroundColor(.secondary)
+                    .textCase(nil)
+                ) {
+                    if goals.isEmpty {
+                        ContentUnavailableView {
+                            Image(systemName: "flag")
+                                .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
+                        } description: {
+                            Text("伟大的计划始于第一个微动作。")
+                                .font(.subheadline).foregroundColor(.secondary)
+                        }
+                        .listRowBackground(Color.clear)
+                    } else {
                         ForEach(goals) { goal in
                             NavigationLink(destination: GoalDetailView(goal: goal)) {
                                 GoalRow(goal: goal)
                             }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
                         }
                         .onDelete(perform: deleteGoals)
                     }
                 }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
             }
+            .listStyle(.insetGrouped) // 回归 Apple 最原生的分组列表样式
             .navigationTitle("Flow PDCA")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -53,16 +55,11 @@ struct ContentView: View {
                             .foregroundStyle(.blue.gradient)
                     }
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    EditButton().font(.subheadline)
-                }
             }
-            .alert("设定新目标", isPresented: $isShowingAddGoalAlert) {
-                TextField("例如：本周看完一本商业管理书", text: $newGoalTitle)
-                Button("取消", role: .cancel) { }
-                Button("确定", action: saveNewGoal)
-            } message: {
-                Text("输入明确的目标，AI 才能给出精准的拆解计划。")
+            .alert("确立核心目标", isPresented: $isShowingAddGoalAlert) {
+                TextField("例如：小红书年度战略", text: $newGoalTitle)
+                Button("取消", role: .cancel) { newGoalTitle = "" }
+                Button("创建", action: saveNewGoal)
             }
         }
     }
@@ -79,23 +76,22 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
             let newGoal = Goal(title: newGoalTitle)
             modelContext.insert(newGoal)
+            newGoalTitle = ""
         }
     }
 
     private func deleteGoals(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets { modelContext.delete(goals[index]) }
-        }
+        withAnimation { for index in offsets { modelContext.delete(goals[index]) } }
     }
 }
 
-// MARK: - 主页组件
+// MARK: - 主页生理状态组件
 struct HealthGlassCard: View {
     var healthManager: HealthManager
     var body: some View {
         VStack(spacing: 18) {
             HStack {
-                Label("今日生理状态", systemImage: "sparkles")
+                Label("生理能效状态", systemImage: "bolt.heart.fill")
                     .font(.caption).fontWeight(.bold).foregroundStyle(.blue.opacity(0.8))
                 Spacer()
                 if !healthManager.isAuthorized {
@@ -112,10 +108,7 @@ struct HealthGlassCard: View {
             }
         }
         .padding(20)
-        .background(.ultraThinMaterial)
-        .cornerRadius(20)
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.5), lineWidth: 1))
-        .padding(.vertical, 10)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
     }
 }
 
@@ -131,54 +124,41 @@ struct StatView: View {
     }
 }
 
+// MARK: - 主页列表 Row
 struct GoalRow: View {
     let goal: Goal
-    
-    var isAllCompleted: Bool {
-        goal.tasks.count > 0 && goal.tasks.allSatisfy { $0.isCompleted }
-    }
-    
+    var totalTasks: Int { goal.milestones.reduce(0) { $0 + $1.tasks.count } }
+    var completedTasks: Int { goal.milestones.reduce(0) { sum, milestone in sum + milestone.tasks.filter { $0.isCompleted }.count } }
+    var isAllCompleted: Bool { totalTasks > 0 && totalTasks == completedTasks }
     var progressText: String {
-        let total = goal.tasks.count
-        if total == 0 { return "待开启 PDCA" }
-        let completed = goal.tasks.filter { $0.isCompleted }.count
-        return "进行中 (已完成 \(completed)/\(total))"
+        if goal.milestones.isEmpty { return "待开启 AI 规划" }
+        if totalTasks == 0 { return "已建骨架，待细化" }
+        return "完成 \(completedTasks)/\(totalTasks)"
     }
     
     var body: some View {
         HStack(spacing: 15) {
-            ZStack {
-                 Circle()
-                    .fill(isAllCompleted ? Color.green.opacity(0.12) : Color.blue.opacity(0.1))
-                    .frame(width: 32, height: 32)
-                Image(systemName: isAllCompleted ? "checkmark" : "target")
-                    .font(.caption)
-                    .foregroundStyle(isAllCompleted ? Color.green : Color.blue)
-            }
+            Image(systemName: isAllCompleted ? "checkmark.circle.fill" : "target")
+                .font(.title2)
+                .foregroundStyle(isAllCompleted ? Color.green : Color.blue)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(goal.title)
                     .font(.system(.body, design: .rounded))
-                    .fontWeight(.bold)
+                    .fontWeight(.medium)
                     .lineLimit(2)
                 
-                Text("左滑可删除 • \(progressText)")
-                    .font(.system(size: 10))
+                Text("共 \(goal.milestones.count) 阶段规划 • \(progressText)")
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
             Spacer()
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 }
 
-// MARK: - 详情页
-enum AIOperationMode {
-    case append
-    case rewriteUncompleted
-    case clearAll
-}
-
+// MARK: - 2. 目标详情页 (大阶段视图)
 struct GoalDetailView: View {
     @Bindable var goal: Goal
     @Environment(\.modelContext) private var modelContext
@@ -187,379 +167,464 @@ struct GoalDetailView: View {
     @AppStorage("aiBaseURL") private var storedBaseURL = "https://api.deepseek.com/v1/chat/completions"
     @AppStorage("aiModelName") private var storedModelName = "deepseek-chat"
     
-    @State private var isDecomposing = false
-    @State private var showingAIOptions = false
+    @State private var isGenerating = false
     @State private var showingAPIKeySheet = false
     
     var body: some View {
         List {
-            GoalDetailHeader(goal: goal)
+            // 极致纯净的原生大标题
+            Section {
+                TextField("输入宏观大目标...", text: $goal.title, axis: .vertical)
+                    .font(.system(.title, design: .rounded, weight: .bold))
+                    .foregroundColor(.primary)
+                    .lineLimit(4)
+                    .padding(.vertical, 8)
+            }
             
-            if goal.tasks.isEmpty {
-                GoalDetailEmptyState()
-            } else {
-                GoalDetailTaskList(goal: goal)
+            Section(header: Text("项目阶段规划").font(.subheadline.bold()).textCase(nil)) {
+                if goal.milestones.isEmpty {
+                    ContentUnavailableView {
+                        Image(systemName: "flag")
+                            .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
+                    } description: {
+                        Text("点击下方由 AI 为您构建阶段蓝图。")
+                            .font(.subheadline).foregroundColor(.secondary)
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(goal.milestones.sorted(by: { $0.creationDate < $1.creationDate })) { milestone in
+                        NavigationLink(destination: MilestoneDetailView(milestone: milestone, goalTitle: goal.title)) {
+                            MilestoneCleanCard(milestone: milestone)
+                        }
+                    }
+                    .onDelete(perform: deleteMilestones)
+                }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(Color(UIColor.systemGroupedBackground))
-        .safeAreaInset(edge: .bottom) {
-            GoalDetailBottomBar(isDecomposing: isDecomposing, onAction: handleAIButtonClick)
-        }
-        .navigationTitle("任务详情")
+        .listStyle(.insetGrouped)
+        .navigationTitle("项目总览")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("你想如何更新执行计划？", isPresented: $showingAIOptions, titleVisibility: .visible) {
-            Button("补充更多关联任务") { executeAI(mode: .append) }
-            Button("仅重写未完成的任务") { executeAI(mode: .rewriteUncompleted) }
-            Button("推翻并重新生成 (清空所有)", role: .destructive) { executeAI(mode: .clearAll) }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("已完成的打卡记录建议保留。")
+        .safeAreaInset(edge: .bottom) {
+            Button(action: triggerAIMilestoneGeneration) {
+                HStack {
+                    if isGenerating { ProgressView().tint(.white).padding(.trailing, 5) }
+                    Text(isGenerating ? "AI 正在思考蓝图..." : (goal.milestones.isEmpty ? "AI 智能拆解阶段" : "重新规划阶段"))
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                }
+                .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 16)
+                .background(RoundedRectangle(cornerRadius: 16).fill(isGenerating ? Color.gray : Color.blue))
+                .padding(.horizontal, 24).padding(.bottom, 12).padding(.top, 12)
+            }
+            .disabled(isGenerating)
+            .background(.ultraThinMaterial)
         }
-        .sheet(isPresented: $showingAPIKeySheet) {
-            APIKeySettingSheet()
-                .interactiveDismissDisabled(true)
-        }
+        .sheet(isPresented: $showingAPIKeySheet) { APIKeySettingSheet() }
     }
     
-    private func handleAIButtonClick() {
+    private func deleteMilestones(offsets: IndexSet) {
+        let sorted = goal.milestones.sorted(by: { $0.creationDate < $1.creationDate })
+        withAnimation { for index in offsets { modelContext.delete(sorted[index]) } }
+    }
+    
+    private func triggerAIMilestoneGeneration() {
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
-        
-        guard !storedAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else {
-            showingAPIKeySheet = true
-            return
-        }
-        
-        if goal.tasks.isEmpty {
-            executeAI(mode: .clearAll)
-        } else {
-            showingAIOptions = true
-        }
-    }
-    
-    private func executeAI(mode: AIOperationMode) {
-        isDecomposing = true
+        guard !storedAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else { showingAPIKeySheet = true; return }
+        isGenerating = true
         Task {
             do {
-                let taskTitles = try await AIManager.shared.decomposeGoal(
-                    title: goal.title,
-                    apiKey: storedAPIKey,
-                    baseURL: storedBaseURL,
-                    model: storedModelName
-                )
-                
+                let phaseTitles = try await AIManager.shared.generateMilestones(goalTitle: goal.title, apiKey: storedAPIKey, baseURL: storedBaseURL, model: storedModelName)
                 await MainActor.run {
                     withAnimation(.spring()) {
-                        switch mode {
-                        case .append:
-                            break
-                        case .rewriteUncompleted:
-                            let tasksToDelete = goal.tasks.filter { !$0.isCompleted }
-                            for oldTask in tasksToDelete { modelContext.delete(oldTask) }
-                            goal.tasks.removeAll { !$0.isCompleted }
-                        case .clearAll:
-                            for oldTask in goal.tasks { modelContext.delete(oldTask) }
-                            goal.tasks.removeAll()
+                        for m in goal.milestones { modelContext.delete(m) }
+                        goal.milestones.removeAll()
+                        for title in phaseTitles {
+                            let newMilestone = Milestone(title: title)
+                            newMilestone.goal = goal
+                            modelContext.insert(newMilestone)
                         }
-                        
-                        for title in taskTitles {
-                            let newTask = PDCATask(title: title)
-                            newTask.goal = goal
-                            modelContext.insert(newTask)
-                        }
-                        isDecomposing = false
+                        isGenerating = false
                     }
                 }
-            } catch {
-                print("AI 拆解失败: \(error)")
-                await MainActor.run { isDecomposing = false }
-            }
+            } catch { await MainActor.run { isGenerating = false } }
         }
     }
 }
 
-struct GoalDetailHeader: View {
-    @Bindable var goal: Goal
+// 极致干净的阶段行
+struct MilestoneCleanCard: View {
+    @Bindable var milestone: Milestone
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                Text(milestone.title)
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundColor(milestone.progress == 1.0 ? .secondary : .primary)
+                    .lineLimit(2)
+                Spacer()
+                Text("\(Int(milestone.progress * 100))%")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundColor(milestone.progress == 1.0 ? .green : .blue)
+            }
+            
+            HStack {
+                Text("包含 \(milestone.tasks.count) 个微动作")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                ProgressView(value: milestone.progress)
+                    .progressViewStyle(.linear)
+                    .tint(milestone.progress == 1.0 ? .green : .blue)
+                    .frame(width: 60)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - 🏆 阶段详情页 (原生 List + 纯净列表)
+struct MilestoneDetailView: View {
+    @Bindable var milestone: Milestone
+    let goalTitle: String
+    @Environment(\.modelContext) private var modelContext
+    
+    @AppStorage("aiAPIKey") private var storedAPIKey = ""
+    @AppStorage("aiBaseURL") private var storedBaseURL = "https://api.deepseek.com/v1/chat/completions"
+    @AppStorage("aiModelName") private var storedModelName = "deepseek-chat"
+    
+    @State private var isGenerating = false
+    @State private var showingAPIKeySheet = false
     
     var body: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 15) {
-                Image(systemName: "pencil.and.outline")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.blue.gradient)
-                
-                TextField("输入目标标题", text: $goal.title, axis: .vertical)
-                    .font(.title3)
-                    .fontWeight(.bold)
-                    .padding(.bottom, 8)
-                    .background(Color.clear)
+        List {
+            Section {
+                TextField("输入当前阶段核心...", text: $milestone.title, axis: .vertical)
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundColor(.primary)
+                    .lineLimit(3)
+                    .padding(.vertical, 8)
             }
-            .padding(.vertical, 5)
-            .listRowBackground(Color.clear)
-        }
-    }
-}
 
-struct GoalDetailEmptyState: View {
-    var body: some View {
-        Section {
-            Text("点击下方按钮，让 AI 结合 PDCA 逻辑为你拆解该目标。")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .listRowBackground(Color.clear)
+            Section(header: Text("待执行清单").font(.subheadline.bold()).textCase(nil)) {
+                if milestone.tasks.isEmpty {
+                    ContentUnavailableView {
+                        Image(systemName: "list.bullet.clipboard")
+                            .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
+                    } description: {
+                        Text("点击下方由 AI 为您拆解可执行动作。")
+                            .font(.subheadline).foregroundColor(.secondary)
+                    }
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(milestone.tasks.sorted(by: { $0.creationDate < $1.creationDate })) { task in
+                        TaskRowWrapper(task: task, goalTitle: goalTitle)
+                    }
+                    .onDelete(perform: deleteTasks)
+                }
+            }
         }
-    }
-}
-
-struct TaskCardStyleModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .background(Color.white.opacity(0.6))
+        .listStyle(.insetGrouped)
+        .navigationTitle("阶段蓝图")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            Button(action: triggerAITaskGeneration) {
+                HStack {
+                    if isGenerating { ProgressView().tint(.white).padding(.trailing, 5) }
+                    Text(isGenerating ? "AI 正在拆解动作..." : "AI 细化执行清单")
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                }
+                .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 16)
+                .background(RoundedRectangle(cornerRadius: 16).fill(isGenerating ? Color.gray : Color.indigo))
+                .padding(.horizontal, 24).padding(.bottom, 12).padding(.top, 12)
+            }
+            .disabled(isGenerating)
             .background(.ultraThinMaterial)
-            .cornerRadius(16)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.white.opacity(0.5), lineWidth: 0.5)
-            )
-            .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-            .contentShape(Rectangle())
+        }
+        .sheet(isPresented: $showingAPIKeySheet) { APIKeySettingSheet() }
+    }
+    
+    private func deleteTasks(offsets: IndexSet) {
+        let sorted = milestone.tasks.sorted(by: { $0.creationDate < $1.creationDate })
+        withAnimation { for index in offsets { modelContext.delete(sorted[index]) } }
+    }
+    
+    private func triggerAITaskGeneration() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        guard !storedAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else { showingAPIKeySheet = true; return }
+        isGenerating = true
+        Task {
+            do {
+                let taskTitles = try await AIManager.shared.generateSubTasks(goalTitle: goalTitle, milestoneTitle: milestone.title, apiKey: storedAPIKey, baseURL: storedBaseURL, model: storedModelName)
+                await MainActor.run {
+                    withAnimation(.spring()) {
+                        let tasksToDelete = milestone.tasks.filter { !$0.isCompleted }
+                        for t in tasksToDelete { modelContext.delete(t) }
+                        milestone.tasks.removeAll { !$0.isCompleted }
+                        for title in taskTitles {
+                            let newTask = PDCATask(title: title)
+                            newTask.milestone = milestone
+                            modelContext.insert(newTask)
+                        }
+                        isGenerating = false
+                    }
+                }
+            } catch { await MainActor.run { isGenerating = false } }
+        }
     }
 }
 
-struct TaskRowView: View {
+// MARK: - ✨ 终极爽感微动作：果冻弹簧完成动画 + 无删除线排版
+struct TaskRowWrapper: View {
     @Bindable var task: PDCATask
+    let goalTitle: String
+    @State private var showingDetailSheet = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            
+            // 【爽感来源】：精准的 Haptic 震动 + 瞬间的弹簧缩放动画
+            Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                .foregroundColor(task.isCompleted ? .green : Color(UIColor.tertiaryLabel))
+                .font(.title2)
+                .scaleEffect(task.isCompleted ? 1.1 : 1.0) // 选中时微放大
+                .animation(.spring(response: 0.3, dampingFraction: 0.5), value: task.isCompleted)
+                .padding(.top, 2)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    // 完成任务给予极强烈的成功震动反馈
+                    let generator = UIImpactFeedbackGenerator(style: task.isCompleted ? .light : .rigid)
+                    generator.impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        task.isCompleted.toggle()
+                    }
+                }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                // 【视觉降噪】：绝对不用删除线，完成的任务平滑变灰，未完成的保持对比度
+                Text(task.title)
+                    .font(.system(.body, design: .rounded))
+                    .fontWeight(task.isCompleted ? .regular : .medium)
+                    .foregroundColor(task.isCompleted ? .secondary : .primary)
+                
+                if task.aiInsight != nil {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                        Text("点击查看 AI 指南")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(task.isCompleted ? .secondary : .indigo)
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture { showingDetailSheet = true }
+        .sheet(isPresented: $showingDetailSheet) {
+            TaskDetailSheet(task: task, goalTitle: goalTitle)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+// MARK: - 智能解析引擎 (用于剥离 Markdown 构建 Health 风格卡片)
+struct ParsedSection: Identifiable {
+    let id = UUID()
+    let title: String
+    let content: String
+    let icon: String
+}
+
+func parseInsight(markdown: String) -> [ParsedSection] {
+    var sections: [ParsedSection] = []
+    let parts = markdown.components(separatedBy: "**")
+    var i = 1
+    
+    let iconMap: [String: String] = [
+        "核心阻力剖析": "magnifyingglass",
+        "官方最佳实践": "list.bullet.clipboard",
+        "5分钟立刻行动": "bolt.fill",
+        "阻力剖析": "magnifyingglass",
+        "SOP 操作指南": "list.bullet.clipboard",
+        "立刻行动": "bolt.fill"
+    ]
+    
+    while i < parts.count {
+        let titlePart = parts[i].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !titlePart.isEmpty {
+            var contentPart = ""
+            if i + 1 < parts.count { contentPart = parts[i+1].trimmingCharacters(in: .whitespacesAndNewlines) }
+            
+            // 清理多余图标
+            let cleanTitle = titlePart.replacingOccurrences(of: "💡 ", with: "").replacingOccurrences(of: "🎯 ", with: "").replacingOccurrences(of: "🔍 ", with: "")
+            
+            // 匹配图标，如果没有精确匹配，则使用默认的
+            let matchedIcon = iconMap.first(where: { cleanTitle.contains($0.key) })?.value ?? "lightbulb"
+            
+            sections.append(ParsedSection(title: cleanTitle, content: contentPart, icon: matchedIcon))
+            i += 2
+        } else {
+            i += 1
+        }
+    }
+    let valid = sections.filter { !$0.title.isEmpty && !$0.content.isEmpty }
+    return valid.isEmpty ? [ParsedSection(title: "专家指南", content: markdown, icon: "lightbulb")] : valid
+}
+
+// MARK: - 🌟 方案 A：Apple Health 风格的“数据堆叠卡片” (彻底消除长文恐惧)
+struct HealthStyleInsightCard: View {
+    let section: ParsedSection
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: section.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(iconColor)
+                Text(section.title.isEmpty ? "执行要点" : section.title)
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundColor(.primary)
+            }
+            
+            Text(LocalizedStringKey(section.content))
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundColor(.secondary)
+                .lineSpacing(6)
+                .fixedSize(horizontal: false, vertical: true) // 保证文本不被截断
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // 核心：使用标准的 Apple 二级卡片背景
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .cornerRadius(16)
+    }
+    
+    // 动态根据内容分配极其克制的辅助色
+    private var iconColor: Color {
+        if section.title.contains("阻力") { return .orange }
+        if section.title.contains("行动") || section.title.contains("步骤") { return .blue }
+        return .indigo
+    }
+}
+
+// MARK: - 4. 任务详情抽屉 (解决网络请求重叠 Bug)
+struct TaskDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var task: PDCATask
+    let goalTitle: String
     
     @AppStorage("aiAPIKey") private var storedAPIKey = ""
     @AppStorage("aiBaseURL") private var storedBaseURL = "https://api.deepseek.com/v1/chat/completions"
     @AppStorage("aiModelName") private var storedModelName = "deepseek-chat"
     
     @State private var isAnalyzing = false
-    @State private var showingAnalysisSheet = false
     @State private var showingAPIKeySheet = false
-    
-    private var iconName: String { task.isCompleted ? "checkmark.circle.fill" : "circle" }
-    private var iconColor: Color { task.isCompleted ? .green : .blue }
-    private var titleColor: Color { task.isCompleted ? .secondary : .primary }
-    
-    // 逻辑：如果已经存有洞察数据，则直接打开；否则说明还没生成过
-    private var subtitleText: String {
-        if isAnalyzing { return "AI 正在思考破局方案..." }
-        if task.aiInsight != nil { return "左滑删除 • 右滑查看已存 AI 洞察" }
-        return "左滑删除 • 右滑获取 AI 破局方案"
-    }
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: iconName)
-                .foregroundColor(iconColor)
-                .font(.system(size: 16))
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(task.title)
-                    .font(.system(.body, design: .rounded))
-                    .fontWeight(.bold)
-                    .foregroundColor(titleColor)
-                
-                Text(subtitleText)
-                    .font(.system(size: 10))
-                    .foregroundColor(task.aiInsight != nil ? .indigo : Color(UIColor.tertiaryLabel))
-            }
-            Spacer()
-            
-            if isAnalyzing { ProgressView().controlSize(.mini) }
-        }
-        .padding()
-        .modifier(TaskCardStyleModifier())
-        .onTapGesture {
-            guard !isAnalyzing else { return }
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                task.isCompleted.toggle()
-            }
-        }
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            Button {
-                triggerAIAnalysis(forceRegenerate: false)
-            } label: {
-                Label("AI 洞察", systemImage: "sparkles")
-            }
-            .tint(.indigo)
-        }
-        .sheet(isPresented: $showingAnalysisSheet) {
-            // 传入闭包以支持在卡片内点击“重新生成”
-            AIInsightSheet(taskTitle: task.title, markdownText: task.aiInsight ?? "加载中...", onRegenerate: {
-                triggerAIAnalysis(forceRegenerate: true)
-            })
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showingAPIKeySheet) {
-            APIKeySettingSheet()
-        }
-    }
-    
-    // 🌟 核心控制逻辑：带有缓存机制的 AI 触发器
-    private func triggerAIAnalysis(forceRegenerate: Bool) {
-        let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.impactOccurred()
-        
-        guard !storedAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else {
-            showingAPIKeySheet = true
-            return
-        }
-        
-        // 如果不是强制刷新，且本地已有记录，直接秒开展示
-        if !forceRegenerate, let existing = task.aiInsight, !existing.isEmpty {
-            showingAnalysisSheet = true
-            return
-        }
-        
-        isAnalyzing = true
-        
-        Task {
-            do {
-                let goalTitle = task.goal?.title ?? "未知项目"
-                let result = try await AIManager.shared.analyzeTask(
-                    goalTitle: goalTitle,
-                    taskTitle: task.title,
-                    isCompleted: task.isCompleted,
-                    apiKey: storedAPIKey,
-                    baseURL: storedBaseURL,
-                    model: storedModelName
-                )
-                
-                await MainActor.run {
-                    self.task.aiInsight = result // 🔥 永久保存进数据库
-                    self.isAnalyzing = false
-                    self.showingAnalysisSheet = true
-                }
-            } catch {
-                await MainActor.run {
-                    self.isAnalyzing = false
-                    self.task.aiInsight = "抱歉，网络请求失败。请检查配置或重试。\n\n错误信息：\(error.localizedDescription)"
-                    self.showingAnalysisSheet = true
-                }
-            }
-        }
-    }
-}
-
-// 🌟 全新设计：符合 HIG 规范的高级半屏卡片
-struct AIInsightSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let taskTitle: String
-    let markdownText: String
-    var onRegenerate: () -> Void // 重新生成回调
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("当前聚焦任务")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundColor(.secondary)
-                            .textCase(.uppercase)
+            ZStack {
+                // 使用原生群组背景，突出上面的卡片
+                Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
                         
-                        Text(taskTitle)
-                            .font(.headline)
+                        // 彻底静默的标题编辑
+                        TextField("输入执行动作...", text: $task.title, axis: .vertical)
+                            .font(.system(.title2, design: .rounded, weight: .bold))
                             .foregroundColor(.primary)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(12)
-                    
-                    // 完美适配的 Markdown 文本解析
-                    if let attrStr = try? AttributedString(markdown: markdownText, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                        Text(attrStr)
-                            .font(.system(.body, design: .rounded))
-                            .lineSpacing(6)
-                            .padding(.top, 5)
-                    } else {
-                        Text(markdownText)
-                            .font(.system(.body, design: .rounded))
-                            .lineSpacing(6)
-                            .padding(.top, 5)
-                    }
-                    
-                    Spacer(minLength: 40)
-                    
-                    Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                        generator.impactOccurred()
-                        dismiss()
-                        // 给关闭动画留出时间，再触发重新请求
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            onRegenerate()
+                            .padding(.horizontal, 24)
+                            .padding(.top, 32)
+                        
+                        // 优雅的 Health 风格卡片渲染区
+                        VStack(alignment: .leading, spacing: 16) {
+                            if isAnalyzing {
+                                HStack {
+                                    ProgressView().padding(.trailing, 8)
+                                    Text("正在为您提炼结构化方案...").font(.subheadline).foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 40)
+                            } else if let insight = task.aiInsight, !insight.isEmpty {
+                                
+                                // 🌟 核心：将枯燥的长文切割成原生、清爽的卡片块
+                                let parsedSections = parseInsight(markdown: insight)
+                                ForEach(parsedSections) { section in
+                                    HealthStyleInsightCard(section: section)
+                                }
+                                
+                            } else {
+                                VStack(spacing: 16) {
+                                    Image(systemName: "square.text.square")
+                                        .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
+                                    Text("没有头绪？让 AI 为您提炼\n极简的实操落地指南。")
+                                        .font(.subheadline).foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                        .lineSpacing(6)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 40)
+                            }
                         }
-                    }) {
-                        HStack {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                            Text("重新生成洞察")
+                        .padding(.horizontal, 20)
+                        
+                        // 【网络修复】：按钮仅作为主动触发器，绝不自动触发 TLS 报错
+                        Button(action: { triggerAIAnalysis() }) {
+                            HStack {
+                                Image(systemName: task.aiInsight == nil ? "wand.and.stars" : "arrow.triangle.2.circlepath")
+                                Text(task.aiInsight == nil ? "获取专家指导" : "重新生成指导")
+                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            }
+                            .foregroundColor(isAnalyzing ? .gray : .white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            // 按钮样式原生化
+                            .background(RoundedRectangle(cornerRadius: 16).fill(isAnalyzing ? Color(UIColor.systemGray4) : Color.indigo))
                         }
-                        .fontWeight(.bold)
-                        .foregroundColor(.indigo)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.indigo.opacity(0.1))
-                        .cornerRadius(15)
+                        .disabled(isAnalyzing)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 40)
                     }
                 }
-                .padding(24)
             }
-            .navigationTitle("AI 破局洞察")
+            .navigationTitle("动作详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // 🌟 修复 UI 问题：使用标准的系统级完成按钮
-                    Button("关闭") {
-                        dismiss()
+                    Button("完成") { dismiss() }.fontWeight(.bold)
+                }
+            }
+        }
+        .sheet(isPresented: $showingAPIKeySheet) { APIKeySettingSheet() }
+    }
+    
+    // 这个函数现在只有在用户手动点击按钮时才会被调用
+    private func triggerAIAnalysis() {
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.impactOccurred()
+        guard !storedAPIKey.trimmingCharacters(in: .whitespaces).isEmpty else { showingAPIKeySheet = true; return }
+        
+        isAnalyzing = true
+        Task {
+            do {
+                let result = try await AIManager.shared.analyzeTask(goalTitle: goalTitle, taskTitle: task.title, isCompleted: task.isCompleted, apiKey: storedAPIKey, baseURL: storedBaseURL, model: storedModelName)
+                await MainActor.run { self.task.aiInsight = result; self.isAnalyzing = false }
+            } catch {
+                await MainActor.run {
+                    // 即使失败，也会保留之前的旧数据（如果存在），不再用报错信息覆盖掉好不容易生成的文本
+                    if self.task.aiInsight == nil {
+                        self.task.aiInsight = "分析失败：\(error.localizedDescription)"
                     }
-                    .fontWeight(.semibold)
+                    self.isAnalyzing = false
                 }
             }
         }
     }
 }
 
-struct GoalDetailTaskList: View {
-    var goal: Goal
-    var body: some View {
-        Section(header: Text("执行计划")) {
-            ForEach(goal.tasks) { task in
-                TaskRowView(task: task)
-            }
-        }
-        .textCase(nil)
-    }
-}
-
-struct GoalDetailBottomBar: View {
-    var isDecomposing: Bool
-    var onAction: () -> Void
-    
-    var body: some View {
-        Button(action: onAction) {
-            HStack {
-                if isDecomposing { ProgressView().tint(.white).padding(.trailing, 5) }
-                Text(isDecomposing ? "AI 正在思考..." : "AI 更新执行计划").fontWeight(.bold)
-            }
-            .foregroundColor(.white).frame(maxWidth: .infinity).padding()
-            .background(RoundedRectangle(cornerRadius: 15).fill(isDecomposing ? Color.gray : Color.blue))
-        }
-        .disabled(isDecomposing).padding(.horizontal, 20).padding(.bottom, 10).padding(.top, 10)
-        .background(.ultraThinMaterial)
-    }
-}
-
+// MARK: - 5. API 配置页 (保持不变)
 enum AIProvider: String, CaseIterable, Identifiable {
     case deepseek = "DeepSeek (深度求索)"
     case kimi = "Kimi (月之暗面)"
@@ -567,9 +632,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
     case zhipu = "智谱 GLM"
     case openai = "OpenAI"
     case custom = "自定义其他模型"
-    
     var id: String { self.rawValue }
-    
     var defaultURL: String {
         switch self {
         case .deepseek: return "https://api.deepseek.com/v1/chat/completions"
@@ -580,7 +643,6 @@ enum AIProvider: String, CaseIterable, Identifiable {
         case .custom: return ""
         }
     }
-    
     var defaultModel: String {
         switch self {
         case .deepseek: return "deepseek-chat"
@@ -595,16 +657,13 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
 struct APIKeySettingSheet: View {
     @Environment(\.dismiss) private var dismiss
-    
     @AppStorage("aiAPIKey") private var storedAPIKey = ""
     @AppStorage("aiBaseURL") private var storedBaseURL = "https://api.deepseek.com/v1/chat/completions"
     @AppStorage("aiModelName") private var storedModelName = "deepseek-chat"
-
     @State private var selectedProvider: AIProvider = .deepseek
     @State private var tempKey = ""
     @State private var tempURL = ""
     @State private var tempModel = ""
-    
     @State private var isVerifying = false
     @State private var verifyStatusMessage = ""
     @State private var isVerifiedSuccess = false
@@ -614,9 +673,7 @@ struct APIKeySettingSheet: View {
             Form {
                 Section(header: Text("选择大模型服务商")) {
                     Picker("服务商", selection: $selectedProvider) {
-                        ForEach(AIProvider.allCases) { provider in
-                            Text(provider.rawValue).tag(provider)
-                        }
+                        ForEach(AIProvider.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .onChange(of: selectedProvider) {
                         if selectedProvider != .custom {
@@ -626,42 +683,20 @@ struct APIKeySettingSheet: View {
                         }
                     }
                 }
-                
-                Section(header: Text("接口配置"), footer: Text("选择对应服务商后，系统会自动填写接口地址和模型名称。您也可以手动修改它们。")) {
-                    VStack(alignment: .leading) {
-                        Text("Base URL (接口地址)").font(.caption).foregroundColor(.secondary)
-                        TextField("例如：https://api.deepseek.com/...", text: $tempURL)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                    }
-                    
-                    VStack(alignment: .leading) {
-                        Text("Model Name (模型名称)").font(.caption).foregroundColor(.secondary)
-                        TextField("例如：deepseek-chat", text: $tempModel)
-                            .textInputAutocapitalization(.never)
-                    }
-                    
-                    VStack(alignment: .leading) {
-                        Text("API Key (密钥)").font(.caption).foregroundColor(.secondary)
-                        SecureField("sk-xxxxxxxxxxxxxxxxxxxx", text: $tempKey)
-                    }
+                Section(header: Text("接口配置")) {
+                    TextField("Base URL", text: $tempURL).textInputAutocapitalization(.never)
+                    TextField("Model Name", text: $tempModel).textInputAutocapitalization(.never)
+                    SecureField("API Key", text: $tempKey)
                 }
-                
                 Section {
                     Button(action: testConnection) {
                         HStack {
                             Spacer()
-                            if isVerifying {
-                                ProgressView().padding(.trailing, 5)
-                                Text("正在连接测试...").foregroundColor(.secondary)
-                            } else {
-                                Text("测试连接").fontWeight(.bold)
-                            }
+                            Text(isVerifying ? "测试中..." : "测试连接").fontWeight(.bold)
                             Spacer()
                         }
                     }
-                    .disabled(isVerifying || tempKey.isEmpty || tempURL.isEmpty || tempModel.isEmpty)
-                    
+                    .disabled(isVerifying || tempKey.isEmpty)
                     if !verifyStatusMessage.isEmpty {
                         Text(verifyStatusMessage)
                             .font(.footnote)
@@ -670,8 +705,7 @@ struct APIKeySettingSheet: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
-                
-                Section(footer: Text("必须通过【测试连接】验证可用后，方可保存配置。密钥仅保存在本地设备。")) {
+                Section {
                     Button("保存并启用") {
                         storedAPIKey = tempKey.trimmingCharacters(in: .whitespaces)
                         storedBaseURL = tempURL.trimmingCharacters(in: .whitespaces)
@@ -679,7 +713,6 @@ struct APIKeySettingSheet: View {
                         dismiss()
                     }
                     .disabled(!isVerifiedSuccess)
-                    .foregroundColor(isVerifiedSuccess ? .blue : .gray)
                 }
             }
             .navigationTitle("AI 网络设置")
@@ -690,72 +723,31 @@ struct APIKeySettingSheet: View {
                 }
             }
             .onAppear {
-                tempKey = storedAPIKey
-                tempURL = storedBaseURL
-                tempModel = storedModelName
-                
-                if let match = AIProvider.allCases.first(where: { $0.defaultURL == tempURL && $0.defaultModel == tempModel }) {
-                    selectedProvider = match
-                } else {
-                    selectedProvider = .custom
-                }
+                tempKey = storedAPIKey; tempURL = storedBaseURL; tempModel = storedModelName
+                selectedProvider = AIProvider.allCases.first(where: { $0.defaultURL == tempURL && $0.defaultModel == tempModel }) ?? .custom
             }
             .onChange(of: tempKey) { resetVerification() }
-            .onChange(of: tempURL) {
-                checkIfCustom()
-                resetVerification()
-            }
-            .onChange(of: tempModel) {
-                checkIfCustom()
-                resetVerification()
-            }
+            .onChange(of: tempURL) { checkIfCustom(); resetVerification() }
+            .onChange(of: tempModel) { checkIfCustom(); resetVerification() }
         }
     }
     
     private func checkIfCustom() {
-        if selectedProvider != .custom {
-            if tempURL != selectedProvider.defaultURL || tempModel != selectedProvider.defaultModel {
-                selectedProvider = .custom
-            }
+        if selectedProvider != .custom && (tempURL != selectedProvider.defaultURL || tempModel != selectedProvider.defaultModel) {
+            selectedProvider = .custom
         }
     }
-    
-    private func resetVerification() {
-        isVerifiedSuccess = false
-        verifyStatusMessage = ""
-    }
+    private func resetVerification() { isVerifiedSuccess = false; verifyStatusMessage = "" }
     
     private func testConnection() {
         isVerifying = true
         verifyStatusMessage = ""
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
-        
         Task {
             do {
-                let success = try await AIManager.shared.verifyConfiguration(
-                    apiKey: tempKey.trimmingCharacters(in: .whitespaces),
-                    baseURL: tempURL.trimmingCharacters(in: .whitespaces),
-                    model: tempModel.trimmingCharacters(in: .whitespaces)
-                )
-                
-                await MainActor.run {
-                    isVerifying = false
-                    isVerifiedSuccess = success
-                    verifyStatusMessage = success ? "✅ 连接成功！模型响应正常。" : "❌ 验证失败，请检查参数。"
-                    if success {
-                        let successGenerator = UINotificationFeedbackGenerator()
-                        successGenerator.notificationOccurred(.success)
-                    }
-                }
+                let success = try await AIManager.shared.verifyConfiguration(apiKey: tempKey, baseURL: tempURL, model: tempModel)
+                await MainActor.run { isVerifying = false; isVerifiedSuccess = success; verifyStatusMessage = success ? "✅ 连接成功！" : "❌ 验证失败" }
             } catch {
-                await MainActor.run {
-                    isVerifying = false
-                    isVerifiedSuccess = false
-                    verifyStatusMessage = "❌ \(error.localizedDescription)"
-                    let errorGenerator = UINotificationFeedbackGenerator()
-                    errorGenerator.notificationOccurred(.error)
-                }
+                await MainActor.run { isVerifying = false; isVerifiedSuccess = false; verifyStatusMessage = "❌ \(error.localizedDescription)" }
             }
         }
     }

@@ -11,49 +11,50 @@ class AIManager {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let requestBody: [String: Any] = [
-            "model": model,
-            "messages": [["role": "user", "content": "hi"]],
-            "max_tokens": 5
-        ]
+        let requestBody: [String: Any] = ["model": model, "messages": [["role": "user", "content": "hi"]], "max_tokens": 5]
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if httpResponse.statusCode == 200 { return true }
         else {
             let errorMsg = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw NSError(domain: "APIError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "验证失败(状态码 \(httpResponse.statusCode)): \(errorMsg)"])
+            throw NSError(domain: "APIError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "验证失败: \(errorMsg)"])
         }
     }
     
-    func decomposeGoal(title: String, apiKey: String, baseURL: String, model: String) async throws -> [String] {
-        let systemPrompt = "你是一个精通PDCA工作法的效率专家。请将用户的目标拆解为3-5个具体的、可执行的原子任务。请只返回JSON数组格式，例如：[\"任务1\", \"任务2\"]，不要有任何其他解释。"
-        return try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "目标：\(title)", responseFormat: "json_object", apiKey: apiKey, baseURL: baseURL, model: model)
+    func generateMilestones(goalTitle: String, apiKey: String, baseURL: String, model: String) async throws -> [String] {
+        let systemPrompt = """
+        你是一个顶尖的项目管理专家。用户的总目标是：【\(goalTitle)】。
+        请将该目标拆解为 3-4 个逻辑递进的核心执行阶段。
+        要求：全程中文，名称必须直接对应具体赛道内容。
+        必须只返回一维 JSON 字符串数组，例如：["前期资产准备", "核心内容测试", "商业化放量"]
+        """
+        return try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "请输出大阶段拆解。", responseFormat: "json_object", apiKey: apiKey, baseURL: baseURL, model: model)
     }
     
-    // 🌟 深度重构：加入大目标上下文，彻底解决“为什么不用网页版AI”的问题
-    func analyzeTask(goalTitle: String, taskTitle: String, isCompleted: Bool, apiKey: String, baseURL: String, model: String) async throws -> String {
-        let statusText = isCompleted ? "已完成复盘" : "执行遇到卡点"
-        
+    func generateSubTasks(goalTitle: String, milestoneTitle: String, apiKey: String, baseURL: String, model: String) async throws -> [String] {
         let systemPrompt = """
-        你是一个顶级的敏捷项目管理专家。
-        用户的宏观项目目标是：【\(goalTitle)】。
-        当前正在执行的子任务是：【\(taskTitle)】，状态为：\(statusText)。
-        
-        请结合宏观目标，针对这个具体的子任务给出破局洞察。
-        严格使用以下 Markdown 格式输出（不要用 ###，直接用 ** 加粗）：
-        
-        **🔍 核心阻力剖析**
-        (分析该任务在整个项目中最容易踩坑的地方，1-2句话)
-        
-        **💡 破局策略**
-        (给出 2 条极其具体的操作建议)
-        
-        **🎯 5分钟下一步动作**
-        (列出 1-2 个可以立刻动手执行的原子动作)
+        你是敏捷执行教练。总目标：【\(goalTitle)】。当前阶段：【\(milestoneTitle)】。
+        请为当前阶段生成 3-5 个极其落地的【微动作】。
+        要求：动作明确，字数精简，绝对禁止生硬的废话。
+        必须只返回一维 JSON 字符串数组，例如：["分析3个对标账号", "撰写首条测试文案"]
         """
+        return try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "请输出微动作拆解。", responseFormat: "json_object", apiKey: apiKey, baseURL: baseURL, model: model)
+    }
+    
+    func analyzeTask(goalTitle: String, taskTitle: String, isCompleted: Bool, apiKey: String, baseURL: String, model: String) async throws -> String {
+        let statusText = isCompleted ? "已完成" : "待执行"
+        let systemPrompt = """
+        你是顶级商业顾问。宏观目标：【\(goalTitle)】。当前微动作：【\(taskTitle)】 (\(statusText))。
+        请提供极其优雅、专业的实操落地指导。
         
-        let responseArray = try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "请输出针对【\(taskTitle)】的洞察。", responseFormat: "text", apiKey: apiKey, baseURL: baseURL, model: model)
+        【极度严格排版要求】：
+        1. 绝对禁止为了排版而排版！严禁使用生硬的星号 (*)、连续的短横线或大量无意义的 1. 2. 3. 编号。
+        2. 像顶级商业周刊的文章一样，使用自然、流畅的段落描述。
+        3. 核心专业词汇或操作路径，请直接使用 **加粗**，不要加奇怪的符号。
+        4. 必须包含三个优雅的段落结构：【核心阻力剖析】、【官方最佳实践】、【5分钟立刻行动】。直接写段落标题，并加粗。
+        """
+        let responseArray = try await fetchAIResponse(systemPrompt: systemPrompt, userMessage: "请输出针对【\(taskTitle)】的专业指导。", responseFormat: "text", apiKey: apiKey, baseURL: baseURL, model: model)
         return responseArray.first ?? "抱歉，分析数据时出现了一点小偏差。"
     }
     
@@ -75,10 +76,18 @@ class AIManager {
         let content = result.choices.first?.message.content ?? ""
         
         if responseFormat == "json_object" {
-            let backticks = String(repeating: "`", count: 3)
-            let cleanContent = content.replacingOccurrences(of: backticks + "json", with: "").replacingOccurrences(of: backticks, with: "")
-            if let jsonData = cleanContent.data(using: .utf8), let tasks = try? JSONDecoder().decode([String].self, from: jsonData) { return tasks }
-            return [content]
+            let marker = String(repeating: "`", count: 3)
+            var cleanContent = content.replacingOccurrences(of: marker + "json", with: "").replacingOccurrences(of: marker, with: "")
+            cleanContent = cleanContent.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if let jsonData = cleanContent.data(using: .utf8) {
+                if let parsed = try? JSONDecoder().decode([String].self, from: jsonData) { return parsed }
+                if let parsedDicts = try? JSONDecoder().decode([[String: String]].self, from: jsonData) {
+                    let extracted = parsedDicts.compactMap { $0["task"] ?? $0["title"] ?? $0.values.first }
+                    if !extracted.isEmpty { return extracted }
+                }
+            }
+            return ["分析格式异常，请重试"]
         } else {
             return [content]
         }
