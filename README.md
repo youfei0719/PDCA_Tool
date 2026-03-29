@@ -55,7 +55,7 @@
 | **设计风格** | Ultra Thin Material (iOS Native) |
 
 ---
-*Developed by **youfei0719 (蔡大伟)** - 2026 辞职自研项目*
+*Developed by **youfei0719** - 2026 辞职自研项目*
 
 ## 🔄 更新日志 (最新)
 - **重构 AI 交互逻辑**：废弃系统默认 Alert 弹窗，引入符合 Apple HIG 规范的原生自适应半屏卡片 (Half-Sheet)，并完美支持 Markdown 深度排版渲染。
