@@ -1,7 +1,22 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - 1. 根视图 (显示大目标)
+struct TaskInsightResponse: Codable {
+    let insights: [InsightCard]
+}
+
+struct InsightCard: Codable, Identifiable {
+    var id: String { title }
+    let title: String
+    let icon: String
+    let content: String
+    
+    enum CodingKeys: String, CodingKey {
+        case title, icon, content
+    }
+}
+
+// MARK: - 1. 根视图 (主列表页)
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Goal.creationDate, order: .reverse) private var goals: [Goal]
@@ -27,10 +42,10 @@ struct ContentView: View {
                 ) {
                     if goals.isEmpty {
                         ContentUnavailableView {
-                            Image(systemName: "flag")
+                            Image(systemName: "target")
                                 .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
                         } description: {
-                            Text("伟大的计划始于第一个微动作。")
+                            Text("伟大的计划始于第一个动作。")
                                 .font(.subheadline).foregroundColor(.secondary)
                         }
                         .listRowBackground(Color.clear)
@@ -44,15 +59,14 @@ struct ContentView: View {
                     }
                 }
             }
-            .listStyle(.insetGrouped) // 回归 Apple 最原生的分组列表样式
+            .listStyle(.insetGrouped)
             .navigationTitle("Flow PDCA")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: promptAddGoal) {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 24))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(.blue.gradient)
+                            .foregroundStyle(.blue)
                     }
                 }
             }
@@ -85,7 +99,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 主页生理状态组件
+// MARK: - 主页组件
 struct HealthGlassCard: View {
     var healthManager: HealthManager
     var body: some View {
@@ -124,7 +138,6 @@ struct StatView: View {
     }
 }
 
-// MARK: - 主页列表 Row
 struct GoalRow: View {
     let goal: Goal
     var totalTasks: Int { goal.milestones.reduce(0) { $0 + $1.tasks.count } }
@@ -158,7 +171,38 @@ struct GoalRow: View {
     }
 }
 
-// MARK: - 2. 目标详情页 (大阶段视图)
+// MARK: - 🏆 大标题排版 (已清空所有多余英文)
+struct NativeGoalHeader: View {
+    @Bindable var goal: Goal
+    var completedTasks: Int { goal.milestones.reduce(0) { sum, milestone in sum + milestone.tasks.filter { $0.isCompleted }.count } }
+    var totalTasks: Int { goal.milestones.reduce(0) { $0 + $1.tasks.count } }
+    var progress: Double { totalTasks == 0 ? 0 : Double(completedTasks) / Double(totalTasks) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("输入宏观大目标...", text: $goal.title, axis: .vertical)
+                .font(.system(size: 30, weight: .heavy, design: .default))
+                .minimumScaleFactor(0.85)
+                .foregroundColor(.primary)
+                .lineSpacing(2)
+                .padding(.top, 10)
+            
+            HStack(spacing: 16) {
+                Label(goal.creationDate.formatted(date: .numeric, time: .omitted), systemImage: "calendar")
+                Label("\(goal.milestones.count) 阶段", systemImage: "flag")
+                Label("\(Int(progress * 100))%", systemImage: "chart.bar.fill")
+            }
+            .font(.caption.weight(.medium))
+            .foregroundColor(.secondary)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 10)
+    }
+}
+
+// MARK: - 2. 目标详情页
 struct GoalDetailView: View {
     @Bindable var goal: Goal
     @Environment(\.modelContext) private var modelContext
@@ -171,44 +215,54 @@ struct GoalDetailView: View {
     @State private var showingAPIKeySheet = false
     
     var body: some View {
-        List {
-            // 极致纯净的原生大标题
-            Section {
-                TextField("输入宏观大目标...", text: $goal.title, axis: .vertical)
-                    .font(.system(.title, design: .rounded, weight: .bold))
-                    .foregroundColor(.primary)
-                    .lineLimit(4)
-                    .padding(.vertical, 8)
-            }
-            
-            Section(header: Text("项目阶段规划").font(.subheadline.bold()).textCase(nil)) {
-                if goal.milestones.isEmpty {
-                    ContentUnavailableView {
-                        Image(systemName: "flag")
-                            .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
-                    } description: {
-                        Text("点击下方由 AI 为您构建阶段蓝图。")
-                            .font(.subheadline).foregroundColor(.secondary)
+        ScrollView {
+            VStack(spacing: 0) {
+                NativeGoalHeader(goal: goal)
+
+                LazyVStack(spacing: 12) {
+                    HStack {
+                        Text("项目执行阶段")
+                            .font(.title2.bold())
+                            .foregroundColor(.primary)
+                        Spacer()
                     }
-                    .listRowBackground(Color.clear)
-                } else {
-                    ForEach(goal.milestones.sorted(by: { $0.creationDate < $1.creationDate })) { milestone in
-                        NavigationLink(destination: MilestoneDetailView(milestone: milestone, goalTitle: goal.title)) {
-                            MilestoneCleanCard(milestone: milestone)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+                    
+                    if goal.milestones.isEmpty {
+                        ContentUnavailableView {
+                            Image(systemName: "flag")
+                                .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
+                        } description: {
+                            Text("点击下方由 AI 为您构建阶段蓝图。")
+                                .font(.subheadline).foregroundColor(.secondary)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                    } else {
+                        ForEach(goal.milestones.sorted(by: { $0.creationDate < $1.creationDate })) { milestone in
+                            NavigationLink(destination: MilestoneDetailView(milestone: milestone, goalTitle: goal.title)) {
+                                MilestoneNativeCard(milestone: milestone)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .padding(.horizontal, 20)
+                        }
+                        .onDelete(perform: deleteMilestones)
                     }
-                    .onDelete(perform: deleteMilestones)
                 }
+                .padding(.bottom, 100)
             }
         }
-        .listStyle(.insetGrouped)
-        .navigationTitle("项目总览")
+        .background(Color(UIColor.systemGroupedBackground))
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isGenerating) // 防误退
         .safeAreaInset(edge: .bottom) {
             Button(action: triggerAIMilestoneGeneration) {
                 HStack {
                     if isGenerating { ProgressView().tint(.white).padding(.trailing, 5) }
-                    Text(isGenerating ? "AI 正在思考蓝图..." : (goal.milestones.isEmpty ? "AI 智能拆解阶段" : "重新规划阶段"))
+                    Text(isGenerating ? "AI 正在思考阶段..." : (goal.milestones.isEmpty ? "AI 智能拆解阶段" : "重新规划阶段"))
                         .font(.system(.subheadline, design: .rounded, weight: .bold))
                 }
                 .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 16)
@@ -251,38 +305,40 @@ struct GoalDetailView: View {
     }
 }
 
-// 极致干净的阶段行
-struct MilestoneCleanCard: View {
+// 阶段卡片
+struct MilestoneNativeCard: View {
     @Bindable var milestone: Milestone
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 Text(milestone.title)
-                    .font(.system(.headline, design: .rounded))
+                    .font(.system(.headline, weight: .semibold))
                     .foregroundColor(milestone.progress == 1.0 ? .secondary : .primary)
                     .lineLimit(2)
                 Spacer()
                 Text("\(Int(milestone.progress * 100))%")
-                    .font(.system(.subheadline, design: .rounded, weight: .bold))
-                    .foregroundColor(milestone.progress == 1.0 ? .green : .blue)
+                    .font(.system(.subheadline, weight: .bold))
+                    .foregroundColor(milestone.progress == 1.0 ? .green : .accentColor)
             }
             
             HStack {
                 Text("包含 \(milestone.tasks.count) 个微动作")
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
                 Spacer()
                 ProgressView(value: milestone.progress)
                     .progressViewStyle(.linear)
-                    .tint(milestone.progress == 1.0 ? .green : .blue)
+                    .tint(milestone.progress == 1.0 ? .green : .accentColor)
                     .frame(width: 60)
             }
         }
-        .padding(.vertical, 4)
+        .padding(16)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .cornerRadius(16)
     }
 }
 
-// MARK: - 🏆 阶段详情页 (原生 List + 纯净列表)
+// MARK: - 3. 阶段详情页 (大标题完全清空冗余元素)
 struct MilestoneDetailView: View {
     @Bindable var milestone: Milestone
     let goalTitle: String
@@ -298,20 +354,25 @@ struct MilestoneDetailView: View {
     var body: some View {
         List {
             Section {
-                TextField("输入当前阶段核心...", text: $milestone.title, axis: .vertical)
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundColor(.primary)
-                    .lineLimit(3)
-                    .padding(.vertical, 8)
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("输入阶段核心目标...", text: $milestone.title, axis: .vertical)
+                        .font(.system(size: 30, weight: .heavy, design: .default))
+                        .minimumScaleFactor(0.85) // 防断行
+                        .foregroundColor(.primary)
+                        .padding(.top, 24) // 加大顶部边距，避开返回键
+                }
             }
+            .listRowBackground(Color.clear) // 彻底隐藏默认白底框
+            .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 20, trailing: 0))
+            .listRowSeparator(.hidden)
 
-            Section(header: Text("待执行清单").font(.subheadline.bold()).textCase(nil)) {
+            Section(header: Text("执行清单").font(.subheadline.bold()).textCase(nil)) {
                 if milestone.tasks.isEmpty {
                     ContentUnavailableView {
                         Image(systemName: "list.bullet.clipboard")
                             .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
                     } description: {
-                        Text("点击下方由 AI 为您拆解可执行动作。")
+                        Text("点击下方由 AI 拆解具体执行动作。")
                             .font(.subheadline).foregroundColor(.secondary)
                     }
                     .listRowBackground(Color.clear)
@@ -324,8 +385,9 @@ struct MilestoneDetailView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("阶段蓝图")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isGenerating) // 防误退
         .safeAreaInset(edge: .bottom) {
             Button(action: triggerAITaskGeneration) {
                 HStack {
@@ -374,7 +436,7 @@ struct MilestoneDetailView: View {
     }
 }
 
-// MARK: - ✨ 终极爽感微动作：果冻弹簧完成动画 + 无删除线排版
+// 任务行
 struct TaskRowWrapper: View {
     @Bindable var task: PDCATask
     let goalTitle: String
@@ -382,17 +444,14 @@ struct TaskRowWrapper: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            
-            // 【爽感来源】：精准的 Haptic 震动 + 瞬间的弹簧缩放动画
             Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                 .foregroundColor(task.isCompleted ? .green : Color(UIColor.tertiaryLabel))
                 .font(.title2)
-                .scaleEffect(task.isCompleted ? 1.1 : 1.0) // 选中时微放大
+                .scaleEffect(task.isCompleted ? 1.1 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.5), value: task.isCompleted)
                 .padding(.top, 2)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    // 完成任务给予极强烈的成功震动反馈
                     let generator = UIImpactFeedbackGenerator(style: task.isCompleted ? .light : .rigid)
                     generator.impactOccurred()
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -401,7 +460,6 @@ struct TaskRowWrapper: View {
                 }
             
             VStack(alignment: .leading, spacing: 6) {
-                // 【视觉降噪】：绝对不用删除线，完成的任务平滑变灰，未完成的保持对比度
                 Text(task.title)
                     .font(.system(.body, design: .rounded))
                     .fontWeight(task.isCompleted ? .regular : .medium)
@@ -429,87 +487,7 @@ struct TaskRowWrapper: View {
     }
 }
 
-// MARK: - 智能解析引擎 (用于剥离 Markdown 构建 Health 风格卡片)
-struct ParsedSection: Identifiable {
-    let id = UUID()
-    let title: String
-    let content: String
-    let icon: String
-}
-
-func parseInsight(markdown: String) -> [ParsedSection] {
-    var sections: [ParsedSection] = []
-    let parts = markdown.components(separatedBy: "**")
-    var i = 1
-    
-    let iconMap: [String: String] = [
-        "核心阻力剖析": "magnifyingglass",
-        "官方最佳实践": "list.bullet.clipboard",
-        "5分钟立刻行动": "bolt.fill",
-        "阻力剖析": "magnifyingglass",
-        "SOP 操作指南": "list.bullet.clipboard",
-        "立刻行动": "bolt.fill"
-    ]
-    
-    while i < parts.count {
-        let titlePart = parts[i].trimmingCharacters(in: .whitespacesAndNewlines)
-        if !titlePart.isEmpty {
-            var contentPart = ""
-            if i + 1 < parts.count { contentPart = parts[i+1].trimmingCharacters(in: .whitespacesAndNewlines) }
-            
-            // 清理多余图标
-            let cleanTitle = titlePart.replacingOccurrences(of: "💡 ", with: "").replacingOccurrences(of: "🎯 ", with: "").replacingOccurrences(of: "🔍 ", with: "")
-            
-            // 匹配图标，如果没有精确匹配，则使用默认的
-            let matchedIcon = iconMap.first(where: { cleanTitle.contains($0.key) })?.value ?? "lightbulb"
-            
-            sections.append(ParsedSection(title: cleanTitle, content: contentPart, icon: matchedIcon))
-            i += 2
-        } else {
-            i += 1
-        }
-    }
-    let valid = sections.filter { !$0.title.isEmpty && !$0.content.isEmpty }
-    return valid.isEmpty ? [ParsedSection(title: "专家指南", content: markdown, icon: "lightbulb")] : valid
-}
-
-// MARK: - 🌟 方案 A：Apple Health 风格的“数据堆叠卡片” (彻底消除长文恐惧)
-struct HealthStyleInsightCard: View {
-    let section: ParsedSection
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: section.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(iconColor)
-                Text(section.title.isEmpty ? "执行要点" : section.title)
-                    .font(.system(.headline, design: .rounded))
-                    .foregroundColor(.primary)
-            }
-            
-            Text(LocalizedStringKey(section.content))
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundColor(.secondary)
-                .lineSpacing(6)
-                .fixedSize(horizontal: false, vertical: true) // 保证文本不被截断
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // 核心：使用标准的 Apple 二级卡片背景
-        .background(Color(UIColor.secondarySystemGroupedBackground))
-        .cornerRadius(16)
-    }
-    
-    // 动态根据内容分配极其克制的辅助色
-    private var iconColor: Color {
-        if section.title.contains("阻力") { return .orange }
-        if section.title.contains("行动") || section.title.contains("步骤") { return .blue }
-        return .indigo
-    }
-}
-
-// MARK: - 4. 任务详情抽屉 (解决网络请求重叠 Bug)
+// MARK: - 🌟 动作详情抽屉 (防弹 JSON 提取 + 严格阻断下滑关闭)
 struct TaskDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var task: PDCATask
@@ -522,47 +500,89 @@ struct TaskDetailSheet: View {
     @State private var isAnalyzing = false
     @State private var showingAPIKeySheet = false
     
+    // 防弹级 JSON 解析器
+    private func parseInsights(from string: String) -> [InsightCard] {
+        guard let firstBrace = string.firstIndex(of: "{"),
+              let lastBrace = string.lastIndex(of: "}") else { return [] }
+        
+        let jsonString = String(string[firstBrace...lastBrace])
+        guard let data = jsonString.data(using: .utf8) else { return [] }
+        
+        do {
+            if let response = try? JSONDecoder().decode(TaskInsightResponse.self, from: data) {
+                return response.insights
+            }
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let insightsArray = json["insights"] as? [[String: Any]] {
+                return insightsArray.compactMap { dict in
+                    let title = dict["title"] as? String ?? "指南"
+                    let icon = dict["icon"] as? String ?? "sparkles"
+                    let content = dict["content"] as? String ?? ""
+                    if content.isEmpty { return nil }
+                    return InsightCard(title: title, icon: icon, content: content)
+                }
+            }
+        } catch {
+            print("JSON 解析保护拦截：\(error)")
+        }
+        return []
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
-                // 使用原生群组背景，突出上面的卡片
                 Color(UIColor.systemGroupedBackground).ignoresSafeArea()
                 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         
-                        // 彻底静默的标题编辑
                         TextField("输入执行动作...", text: $task.title, axis: .vertical)
                             .font(.system(.title2, design: .rounded, weight: .bold))
                             .foregroundColor(.primary)
-                            .padding(.horizontal, 24)
+                            .padding(.horizontal, 20)
                             .padding(.top, 32)
                         
-                        // 优雅的 Health 风格卡片渲染区
                         VStack(alignment: .leading, spacing: 16) {
                             if isAnalyzing {
                                 HStack {
                                     ProgressView().padding(.trailing, 8)
-                                    Text("正在为您提炼结构化方案...").font(.subheadline).foregroundColor(.secondary)
+                                    Text("专家大脑正在深度提炼...").font(.subheadline).foregroundColor(.secondary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.vertical, 40)
-                            } else if let insight = task.aiInsight, !insight.isEmpty {
                                 
-                                // 🌟 核心：将枯燥的长文切割成原生、清爽的卡片块
-                                let parsedSections = parseInsight(markdown: insight)
-                                ForEach(parsedSections) { section in
-                                    HealthStyleInsightCard(section: section)
+                            } else if let insightString = task.aiInsight, !insightString.isEmpty {
+                                
+                                let cards = parseInsights(from: insightString)
+                                
+                                if !cards.isEmpty {
+                                    VStack(spacing: 16) {
+                                        ForEach(cards) { card in
+                                            InsightAppleCard(card: card)
+                                        }
+                                    }
+                                } else {
+                                    // 拦截所有乱码，保护 UI
+                                    VStack(spacing: 12) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 40)).foregroundColor(.orange.opacity(0.8))
+                                        Text("排版构建出现偏差")
+                                            .font(.headline).foregroundColor(.primary)
+                                        Text("系统已自动拦截乱码，请点击下方按钮重新生成卡片。")
+                                            .font(.subheadline).foregroundColor(.secondary)
+                                            .multilineTextAlignment(.center)
+                                            .padding(.horizontal, 20)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 40)
                                 }
                                 
                             } else {
                                 VStack(spacing: 16) {
-                                    Image(systemName: "square.text.square")
+                                    Image(systemName: "square.grid.2x2")
                                         .font(.system(size: 40)).foregroundColor(.secondary.opacity(0.3))
-                                    Text("没有头绪？让 AI 为您提炼\n极简的实操落地指南。")
+                                    Text("让 AI 为您生成极简的行动卡片。")
                                         .font(.subheadline).foregroundColor(.secondary)
-                                        .multilineTextAlignment(.center)
-                                        .lineSpacing(6)
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 40)
@@ -570,20 +590,18 @@ struct TaskDetailSheet: View {
                         }
                         .padding(.horizontal, 20)
                         
-                        // 【网络修复】：按钮仅作为主动触发器，绝不自动触发 TLS 报错
                         Button(action: { triggerAIAnalysis() }) {
                             HStack {
                                 Image(systemName: task.aiInsight == nil ? "wand.and.stars" : "arrow.triangle.2.circlepath")
-                                Text(task.aiInsight == nil ? "获取专家指导" : "重新生成指导")
+                                Text(task.aiInsight == nil ? "获取行动卡片" : "重新提炼卡片")
                                     .font(.system(.subheadline, design: .rounded, weight: .bold))
                             }
                             .foregroundColor(isAnalyzing ? .gray : .white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            // 按钮样式原生化
                             .background(RoundedRectangle(cornerRadius: 16).fill(isAnalyzing ? Color(UIColor.systemGray4) : Color.indigo))
                         }
-                        .disabled(isAnalyzing)
+                        .disabled(isAnalyzing) // 🌟 生成中禁用按钮
                         .padding(.horizontal, 20)
                         .padding(.bottom, 40)
                     }
@@ -591,16 +609,18 @@ struct TaskDetailSheet: View {
             }
             .navigationTitle("动作详情")
             .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(isAnalyzing) // 🌟 锁定：防向下滑动关闭
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }.fontWeight(.bold)
+                    Button("完成") { dismiss() }
+                        .fontWeight(.bold)
+                        .disabled(isAnalyzing) // 🌟 锁定：完成按钮变灰
                 }
             }
         }
         .sheet(isPresented: $showingAPIKeySheet) { APIKeySettingSheet() }
     }
     
-    // 这个函数现在只有在用户手动点击按钮时才会被调用
     private func triggerAIAnalysis() {
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.impactOccurred()
@@ -613,7 +633,6 @@ struct TaskDetailSheet: View {
                 await MainActor.run { self.task.aiInsight = result; self.isAnalyzing = false }
             } catch {
                 await MainActor.run {
-                    // 即使失败，也会保留之前的旧数据（如果存在），不再用报错信息覆盖掉好不容易生成的文本
                     if self.task.aiInsight == nil {
                         self.task.aiInsight = "分析失败：\(error.localizedDescription)"
                     }
@@ -624,7 +643,47 @@ struct TaskDetailSheet: View {
     }
 }
 
-// MARK: - 5. API 配置页 (保持不变)
+// Apple Health 风格卡片
+struct InsightAppleCard: View {
+    let card: InsightCard
+    
+    var iconTint: Color {
+        if card.title.contains("阻力") || card.title.contains("坑") { return .orange }
+        if card.title.contains("行动") || card.title.contains("立刻") { return .blue }
+        return .indigo
+    }
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(iconTint.opacity(0.12))
+                    .frame(width: 42, height: 42)
+                Image(systemName: card.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(iconTint)
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(card.title)
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundColor(.primary)
+                
+                Text(card.content)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .lineSpacing(4)
+            }
+            .padding(.top, 2)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .cornerRadius(20)
+    }
+}
+
+// MARK: - 5. API 配置页
 enum AIProvider: String, CaseIterable, Identifiable {
     case deepseek = "DeepSeek (深度求索)"
     case kimi = "Kimi (月之暗面)"
@@ -717,9 +776,10 @@ struct APIKeySettingSheet: View {
             }
             .navigationTitle("AI 网络设置")
             .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(isVerifying)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("取消") { dismiss() }
+                    Button("取消") { dismiss() }.disabled(isVerifying)
                 }
             }
             .onAppear {
@@ -747,7 +807,7 @@ struct APIKeySettingSheet: View {
                 let success = try await AIManager.shared.verifyConfiguration(apiKey: tempKey, baseURL: tempURL, model: tempModel)
                 await MainActor.run { isVerifying = false; isVerifiedSuccess = success; verifyStatusMessage = success ? "✅ 连接成功！" : "❌ 验证失败" }
             } catch {
-                await MainActor.run { isVerifying = false; isVerifiedSuccess = false; verifyStatusMessage = "❌ \(error.localizedDescription)" }
+                await MainActor.run { isVerifying = false; isVerifiedSuccess = false; verifyStatusMessage = "❌ 验证失败：\(error.localizedDescription)" }
             }
         }
     }
